@@ -9,6 +9,8 @@
  *
  * Copyright (C) 2006 Qumranet, Inc.
  * Copyright 2010 Red Hat, Inc. and/or its affiliates.
+ * Copyright (C) 2019-2026, Trusted Cloud Group, Institute of Scalable Computing,
+ * Shanghai Jiao Tong University.
  *
  * Authors:
  *   Yaniv Kamay  <yaniv@qumranet.com>
@@ -28,6 +30,23 @@
 #include "page_track.h"
 #include "cpuid.h"
 #include "spte.h"
+
+#ifdef CONFIG_KVM_DSM
+#include "../dsm.h"
+
+static inline int dsm_mmu_pre_fault(struct kvm_vcpu *vcpu,
+				    struct kvm_page_fault *fault)
+{
+	return kvm_dsm_vcpu_acquire_page(vcpu, &fault->slot, fault->gfn,
+					fault->write);
+}
+
+static inline void dsm_mmu_post_fault(struct kvm_vcpu *vcpu,
+				       struct kvm_page_fault *fault)
+{
+	kvm_dsm_vcpu_release_page(vcpu, fault->slot, fault->gfn);
+}
+#endif
 
 #include <linux/kvm_host.h>
 #include <linux/types.h>
@@ -108,7 +127,18 @@ bool tdp_enabled = false;
 static bool __ro_after_init tdp_mmu_allowed;
 
 #ifdef CONFIG_X86_64
+
+#ifdef CONFIG_KVM_DSM
+/*                                                                                                                                      │
+ * TDP MMU must be disabled when DSM is active.  DSM's page fault handling                                                              │
+ * and rmap-based page state tracking rely on the shadow MMU's page table                                                               │
+ * structure; the TDP MMU's independent root/leaf management is incompatible                                                            │
+ * with DSM's coherence protocol.                                                                                                       │
+ */    
+bool __read_mostly tdp_mmu_enabled = false;
+#else
 bool __read_mostly tdp_mmu_enabled = true;
+#endif
 module_param_named(tdp_mmu, tdp_mmu_enabled, bool, 0444);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(tdp_mmu_enabled);
 #endif
@@ -1049,6 +1079,58 @@ static int pte_list_add(struct kvm *kvm, struct kvm_mmu_memory_cache *cache,
 
 	return count;
 }
+
+#ifdef CONFIG_KVM_DSM
+/*
+ * DSM: pte_list_add_nocheck
+ *
+ * The original pte_list_add calls kvm_rmap_lock, which checks Bit 1
+ * (KVM_RMAP_LOCKED). However, DSM stores (gfn << 1) in rmap entries,
+ * so when gfn is odd, Bit 1 gets set, triggering kvm_rmap_lock's deadlock
+ * detection. Additionally, DSM already holds slot->rmap_lock at the
+ * upper layer, so KVM's rmap lock is not needed here.
+ */
+static int pte_list_add_nocheck(struct kvm *kvm, struct kvm_mmu_memory_cache *cache,
+			u64 *spte, struct kvm_rmap_head *rmap_head)
+{
+	unsigned long old_val, new_val;
+	struct pte_list_desc *desc;
+	int count = 0;
+
+	old_val = atomic_long_read(&rmap_head->val);
+
+	if (!old_val) {
+		new_val = (unsigned long)spte;
+	} else if (!(old_val & KVM_RMAP_MANY)) {
+		// The rmap entry is currently a single SPTE, so we need to convert it to a list descriptor to add the new SPTE.
+		desc = kmem_cache_zalloc(pte_list_desc_cache, GFP_KERNEL);
+		desc->sptes[0] = (u64 *)old_val;
+		desc->sptes[1] = spte;
+		desc->spte_count = 2;
+		desc->tail_count = 0;
+		new_val = (unsigned long)desc | KVM_RMAP_MANY;
+		++count;
+	} else {
+		desc = (struct pte_list_desc *)(old_val & ~KVM_RMAP_MANY);
+		count = desc->tail_count + desc->spte_count;
+
+		if (desc->spte_count == PTE_LIST_EXT) {
+			desc = kmem_cache_zalloc(pte_list_desc_cache, GFP_KERNEL);
+			desc->more = (struct pte_list_desc *)(old_val & ~KVM_RMAP_MANY);
+			desc->spte_count = 0;
+			desc->tail_count = count;
+			new_val = (unsigned long)desc | KVM_RMAP_MANY;
+		} else {
+			new_val = old_val;
+		}
+		desc->sptes[desc->spte_count++] = spte;
+	}
+
+	atomic_long_set(&rmap_head->val, new_val);
+
+	return count;
+}
+#endif
 
 static void pte_list_desc_remove_entry(struct kvm *kvm, unsigned long *rmap_val,
 				       struct pte_list_desc *desc, int i)
@@ -3470,7 +3552,12 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
+	ret = mmu_set_spte(vcpu, fault->slot, it.sptep,
+#ifdef CONFIG_KVM_DSM
+				   fault->dsm_access,
+#else
+				   ACC_ALL,
+#endif
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
 		return ret;
@@ -4817,6 +4904,14 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		return r;
 
 	r = RET_PF_RETRY;
+#ifdef CONFIG_KVM_DSM
+	fault->dsm_access = dsm_mmu_pre_fault(vcpu, fault);
+	if (fault->dsm_access < 0) {
+		kvm_release_page_unused(fault->refcounted_page);
+		return fault->dsm_access;
+	}
+#endif
+
 	write_lock(&vcpu->kvm->mmu_lock);
 
 	if (is_page_fault_stale(vcpu, fault))
@@ -4827,10 +4922,18 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		goto out_unlock;
 
 	r = direct_map(vcpu, fault);
-
+	write_unlock(&vcpu->kvm->mmu_lock);
+#ifdef CONFIG_KVM_DSM
+	dsm_mmu_post_fault(vcpu, fault);
+#endif
+	return r;
 out_unlock:
 	kvm_mmu_finish_page_fault(vcpu, fault, r);
 	write_unlock(&vcpu->kvm->mmu_lock);
+#ifdef CONFIG_KVM_DSM
+	dsm_mmu_post_fault(vcpu, fault);
+#endif
+	kvm_release_page_unused(fault->refcounted_page);
 	return r;
 }
 
@@ -5100,6 +5203,196 @@ int kvm_tdp_mmu_map_private_pfn(struct kvm_vcpu *vcpu, gfn_t gfn, kvm_pfn_t pfn)
 	return 0;
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_tdp_mmu_map_private_pfn);
+#endif
+
+#ifdef CONFIG_KVM_DSM
+
+#define for_each_rmap_spte_nocheck(_rmap_head_, _iter_, _spte_)		\
+	for (_spte_ = rmap_get_first(_rmap_head_, _iter_);	\
+	     _spte_; _spte_ = rmap_get_next(_iter_))
+
+static inline int gfn_list_add(struct kvm *kvm, gfn_t gfn, struct kvm_rmap_head *rmap_head)
+{
+	return pte_list_add_nocheck(kvm, NULL, (u64 *)gfn, rmap_head);
+}
+static inline void gfn_list_remove(struct kvm *kvm,gfn_t gfn, struct kvm_rmap_head *rmap_head)
+{
+	pte_list_remove(kvm,(u64 *)gfn, rmap_head);
+}
+
+int kvm_dsm_rmap_add(struct kvm *kvm,struct kvm_dsm_memory_slot *slot, bool backup,
+		gfn_t gfn, hfn_t vfn, unsigned long npages)
+{
+	
+	int ret = 0;
+	unsigned long i;
+	struct kvm_rmap_head *rmap_head;
+
+	mutex_lock(slot->rmap_lock);
+	for (i = 0; i < npages; i++, gfn += 2) {
+		rmap_head = backup ? &slot->backup_rmap[vfn++ - slot->base_vfn]
+			: &slot->rmap[vfn++ - slot->base_vfn];
+		ret = gfn_list_add(kvm, gfn, rmap_head);
+		if (ret < 0)
+			break;
+	}
+	if (ret >= 0) {
+		ret = 0;
+		goto out;
+	}
+
+	gfn -= 2;
+	for (; i != ULONG_MAX; i--, gfn -= 2) {
+		rmap_head = backup ? &slot->backup_rmap[--vfn - slot->base_vfn]
+			: &slot->rmap[--vfn - slot->base_vfn];
+		gfn_list_remove(kvm,gfn, rmap_head);
+	}
+
+out:
+	mutex_unlock(slot->rmap_lock);
+	return ret;
+}
+
+void kvm_dsm_rmap_remove(struct kvm *kvm,struct kvm_dsm_memory_slot *slot, bool backup,
+		gfn_t gfn, hfn_t vfn, unsigned long npages)
+{
+	unsigned long i;
+	struct kvm_rmap_head *rmap_head;
+
+	mutex_lock(slot->rmap_lock);
+	for (i = 0; i < npages; i++, gfn += 2) {
+		rmap_head = backup ? &slot->backup_rmap[vfn++ - slot->base_vfn]
+			: &slot->rmap[vfn++ - slot->base_vfn];
+		if (!atomic_long_read(&rmap_head->val))
+			continue;
+		gfn_list_remove(kvm,gfn, rmap_head);
+		printk("kvm[%d] remove gfn[%llx] from rmap[%lu]", kvm->arch.dsm_id, gfn,
+			   atomic_long_read(&rmap_head->val));
+	}
+	mutex_unlock(slot->rmap_lock);
+}
+
+void kvm_dsm_free_rmap(struct kvm *kvm,struct kvm_dsm_memory_slot *slot)
+{
+	int i;
+	u64 *entry;
+	struct rmap_iterator iter;
+
+	for (i = 0; i < slot->npages; i++) {
+		while ((entry = rmap_get_first(&slot->backup_rmap[i], &iter))) {
+			pte_list_remove(kvm,entry, &slot->backup_rmap[i]);
+		}
+		while ((entry = rmap_get_first(&slot->rmap[i], &iter))) {
+			pte_list_remove(kvm,entry, &slot->rmap[i]);
+		}
+	}
+}
+/*
+ * Return gfns mapped to given vfn.
+ * @backup: Which rmap should be used.
+ * @is_smm: Whether returned gfn is in SMM mode. It can be NULL.
+ * @iter_idx: Iteration index. If it's NULL, this function return the first
+ * (should better be treated as a random one) gfn.
+ * If you want to traverse the whole gfn list, you can use the following code:
+ * int iter_idx = 0;
+ * while (iter_idx >= 0) {
+ *     gfn = __kvm_dsm_vfn_to_gfn(slot, vfn, NULL, &iter_idx);
+ *     // do something with gfn
+ * }
+ * @return ~0 on not found
+ */
+gfn_t __kvm_dsm_vfn_to_gfn(struct kvm_dsm_memory_slot *slot, bool backup, hfn_t vfn,
+		bool *is_smm, int *iter_idx, struct kvm_memory_slot *memslot)
+{
+	u64 *entry;
+	gfn_t gfn = ~0;
+	struct rmap_iterator iter;
+	int count = 0;
+	struct kvm_rmap_head *rmap_head;
+
+	rmap_head = backup ? &slot->backup_rmap[vfn - slot->base_vfn]
+		: &slot->rmap[vfn - slot->base_vfn];
+
+	mutex_lock(slot->rmap_lock);
+	for_each_rmap_spte_nocheck(rmap_head, &iter, entry) {
+		gfn = (gfn_t)entry;
+		if (is_smm)
+			*is_smm = (gfn & GFN_SMM_MASK);
+			// {*is_smm = !!(gfn & GFN_SMM_MASK);
+			// }
+		gfn = (gfn & (~(GFN_PRESENT_MASK | GFN_SMM_MASK))) >> 1;
+		if (!iter_idx)
+			goto out;
+		if (count++ == *iter_idx) {
+			*iter_idx = count;
+			goto out;
+		}
+	}
+	if (iter_idx)
+		*iter_idx = -1;
+out:
+	mutex_unlock(slot->rmap_lock);
+	if (memslot == NULL)
+		return gfn;
+	if (gfn > memslot->base_gfn)
+		return gfn;
+	return vfn - slot->base_vfn+memslot->base_gfn;
+}
+
+
+void kvm_dsm_apply_access_right(struct kvm *kvm,
+		struct kvm_dsm_memory_slot *slot, hfn_t vfn, unsigned long dsm_access)
+{
+	u64 *entry;
+	gfn_t gfn;
+	bool is_smm;
+	struct kvm_memory_slot *memslot;
+	struct rmap_iterator iter;
+	struct kvm_rmap_head *rmap_head;
+	bool flush = false;
+
+	pr_devel("dsm: kvm[%d] set vfn[%llu] to dsm_access[%lu]", kvm->arch.dsm_id,
+			vfn, dsm_access);
+		// vfn, dsm_access);
+	/*
+	 * This should rarely race since we almost always do the memslot
+	 * manipulation at the initialization stage and never modify them
+	 * afterwards. The most likely cause of race would be concurrent accesses
+	 * to a dual-port MMIO device.
+	 */
+	mutex_lock(slot->rmap_lock);
+	write_lock(&kvm->mmu_lock);
+	for_each_rmap_spte_nocheck(&slot->rmap[vfn - slot->base_vfn], &iter, entry) {
+		gfn = (gfn_t) entry;
+		is_smm = (gfn & GFN_SMM_MASK);
+		gfn = (gfn & (~(GFN_PRESENT_MASK | GFN_SMM_MASK))) >> 1;
+		memslot = __gfn_to_memslot(__kvm_memslots(kvm, is_smm), gfn);
+		if (!memslot)
+			continue;
+		switch (dsm_access) {
+		case DSM_INVALID:
+		case DSM_MODIFIED: /* should build spte in set_spte */
+			/* Currently we disable large page in DSM mode */
+			rmap_head = gfn_to_rmap(gfn, PG_LEVEL_4K, memslot);
+			if (!rmap_head) {
+				printk("4805 rmap_head is NULL\n");
+			}
+
+			flush |= kvm_zap_all_rmap_sptes(kvm, rmap_head);
+			break;
+		case DSM_SHARED:
+			flush |= kvm_mmu_slot_gfn_write_protect(kvm, memslot, gfn, PG_LEVEL_4K);
+			break;
+		default:
+			break;
+		}
+	}
+	if (flush)
+		kvm_flush_remote_tlbs(kvm);
+	write_unlock(&kvm->mmu_lock);
+	mutex_unlock(slot->rmap_lock);
+}
+
 #endif
 
 static void nonpaging_init_context(struct kvm_mmu *context)

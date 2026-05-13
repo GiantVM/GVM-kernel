@@ -7,6 +7,8 @@
  *
  * Copyright (C) 2006 Qumranet, Inc.
  * Copyright 2010 Red Hat, Inc. and/or its affiliates.
+ * Copyright (C) 2019-2026, Trusted Cloud Group, Institute of Scalable Computing,
+ * Shanghai Jiao Tong University.
  *
  * Authors:
  *   Avi Kivity   <avi@qumranet.com>
@@ -105,7 +107,16 @@ bool __read_mostly enable_unrestricted_guest = 1;
 module_param_named(unrestricted_guest,
 			enable_unrestricted_guest, bool, 0444);
 
+#ifdef CONFIG_KVM_DSM
+/*
+ * EPT A/D bits must be disabled when DSM is active.  Hardware A/D updates
+ * would race with the DSM coherence protocol's page state machine and
+ * corrupt the rmap encoding stored in EPT entries.
+ */
+bool __read_mostly enable_ept_ad_bits = 0;                               
+#else 
 bool __read_mostly enable_ept_ad_bits = 1;
+#endif
 module_param_named(eptad, enable_ept_ad_bits, bool, 0444);
 
 static bool __read_mostly emulate_invalid_guest_state = true;
