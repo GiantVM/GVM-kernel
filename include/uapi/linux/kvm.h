@@ -194,6 +194,17 @@ struct kvm_exit_snp_req_certs {
 #define KVM_EXIT_ARM_LDST64B      42
 #define KVM_EXIT_SNP_REQ_CERTS    43
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+/* DSM exit reason: distributed APIC region access */
+#define KVM_EXIT_DAPIC            44
+/* DSM exit reason: IPI forwarding to userspace */
+#define KVM_EXIT_DSM_SEND_IRQ     45
+/* DSM exit reason: X2APIC ICR write forwarding to userspace */
+#define KVM_EXIT_DSM_X2_ICR       46
+/* DSM exit reason: APIC base MSR write forwarding to userspace */
+#define KVM_EXIT_DSM_APIC_BASE    47
+#endif
+
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
 #define KVM_INTERNAL_ERROR_EMULATION	1
@@ -243,7 +254,27 @@ struct kvm_run {
 	__u64 psw_addr; /* psw lower half */
 #endif
 	union {
-		/* KVM_EXIT_UNKNOWN */
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+		/* DSM IPI forwarding data (KVM_EXIT_DSM_SEND_IRQ) */
+		struct {
+			__u32 id;
+			__u32 val;
+			__u32 val2;
+			__u32 dest_id;
+		} lapic_irq;
+		/* DSM X2APIC write data (KVM_EXIT_DSM_X2APIC) */
+		struct {
+			__u32 id;
+			__u64 data;
+		} x2apic;
+		/* DSM APIC base write data (KVM_EXIT_DSM_APIC_BASE) */
+		struct {
+			__u32 id;
+			bool host;
+			__u32 index;
+			__u64 data;
+		} x2msr_base;
+#endif
 		struct {
 			__u64 hardware_exit_reason;
 		} hw;
@@ -996,6 +1027,10 @@ struct kvm_enable_cap {
 #define KVM_CAP_S390_USER_OPEREXEC 246
 #define KVM_CAP_S390_KEYOP 247
 #define KVM_CAP_S390_VSIE_ESAMODE 248
+#ifdef CONFIG_KVM_DSM
+/* Capability: KVM supports distributed shared memory (DSM) */
+#define KVM_CAP_X86_DSM 249
+#endif
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
@@ -1348,6 +1383,106 @@ struct kvm_s390_keyop {
 #define KVM_SET_DEVICE_ATTR	  _IOW(KVMIO,  0xe1, struct kvm_device_attr)
 #define KVM_GET_DEVICE_ATTR	  _IOW(KVMIO,  0xe2, struct kvm_device_attr)
 #define KVM_HAS_DEVICE_ATTR	  _IOW(KVMIO,  0xe3, struct kvm_device_attr)
+
+#ifdef CONFIG_KVM_DSM
+/**
+ * struct kvm_dsm_params - Parameters for enabling DSM on a VM.
+ *
+ * @dsm_id: Identifier for the DSM instance to join.
+ * @cluster_iplist_len: Number of entries in the cluster IP list.
+ * @cluster_iplist: Userspace pointer to array of cluster node IP addresses.
+ */
+struct kvm_dsm_params {
+	__u32 dsm_id;
+	__u32 cluster_iplist_len;
+	void __user *cluster_iplist;
+};
+
+#define KVM_DSM_ENABLE            _IOW(KVMIO,  0xf0, struct kvm_dsm_params)
+
+/**
+ * struct kvm_dsm_memcpy - Parameters for DSM memory copy between guest and userspace.
+ *
+ * @write: Direction flag; non-zero for guest-to-userspace, zero for userspace-to-guest.
+ * @host_virt_addr: Host virtual address of the source/destination in DSM memory.
+ * @userspace_addr: Userspace virtual address of the source/destination buffer.
+ * @length: Number of bytes to copy.
+ */
+struct kvm_dsm_memcpy {
+	bool write;
+	__u64 host_virt_addr;
+	__u64 userspace_addr;
+	__u64 length;
+};
+
+#define KVM_DSM_MEMCPY _IOW(KVMIO, 0xf1, struct kvm_dsm_memcpy)
+/**
+ * struct kvm_dsm_mempin - Parameters for pinning/unpinning DSM memory pages.
+ *
+ * @write: Pin for write access; non-zero for read-write, zero for read-only.
+ * @unpin: Unpin flag; non-zero to release a previously pinned region.
+ * @host_virt_addr: Host virtual address of the DSM memory region.
+ * @length: Size in bytes of the memory region to pin or unpin.
+ */
+struct kvm_dsm_mempin {
+	bool write;
+	bool unpin;
+	__u64 host_virt_addr;
+	__u64 length;
+};
+
+#define KVM_DSM_MEMPIN            _IOW(KVMIO,  0xf2, struct kvm_dsm_mempin)
+
+/* DSM page size (4KB) */
+#define KVM_DSM_PGSIZE            (4 * 1024)
+
+/**
+ * struct kvm_dipi_params - Parameters for delivering a DSM IPI to a vCPU.
+ *
+ * @vcpu_id: Target vCPU identifier.
+ * @val: Lower 32 bits of the ICR (Interrupt Command Register) value.
+ * @val2: Upper 32 bits of the ICR value.
+ * @dest_id: Destination APIC ID for the IPI.
+ */
+struct kvm_dipi_params {
+	int vcpu_id;
+	__u32 val;
+	__u32 val2;
+	__u32 dest_id;
+};
+
+#define KVM_DSM_IPI _IOW(KVMIO,  0xf3, struct kvm_dipi_params)
+
+/**
+ * struct kvm_x2apic_params - Parameters for forwarding an X2APIC MSR write.
+ *
+ * @vcpu_id: Target vCPU identifier.
+ * @data: The 64-bit MSR value being written to the X2APIC register.
+ */
+struct kvm_x2apic_params {
+	int vcpu_id;
+	__u64 data;
+};
+
+#define KVM_DSM_X2APIC _IOW(KVMIO, 0xf4, struct kvm_x2apic_params)
+
+/**
+ * struct kvm_apic_base_params - Parameters for forwarding an APIC base MSR write.
+ *
+ * @vcpu_id: Target vCPU identifier.
+ * @host: Whether the write targets the host APIC base (non-zero) or guest (zero).
+ * @index: The MSR index being written.
+ * @data: The 64-bit MSR value being written.
+ */
+struct kvm_apic_base_params {
+	int vcpu_id;
+	bool host;
+	__u32 index;
+	__u64 data;
+};
+
+#define KVM_DSM_APIC_BASE         _IOW(KVMIO, 0xf5, struct kvm_apic_base_params)
+#endif
 
 /*
  * ioctls for vcpu fds
