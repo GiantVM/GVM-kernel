@@ -7,6 +7,8 @@
  * Copyright (C) 2007 Novell
  * Copyright (C) 2007 Intel
  * Copyright 2009 Red Hat, Inc. and/or its affiliates.
+ * Copyright (C) 2019-2026, Trusted Cloud Group, Institute of Scalable Computing,
+ * Shanghai Jiao Tong University.
  *
  * Authors:
  *   Dor Laor <dor.laor@qumranet.com>
@@ -46,6 +48,10 @@
 #include "cpuid.h"
 #include "hyperv.h"
 #include "smm.h"
+
+#ifdef CONFIG_KVM_DSM
+#include "dsm.h"
+#endif
 
 #ifndef CONFIG_X86_64
 #define mod_64(x, y) ((x) - (y) * div64_u64(x, y))
@@ -892,16 +898,38 @@ int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
 
 static int pv_eoi_put_user(struct kvm_vcpu *vcpu, u8 val)
 {
-
-	return kvm_write_guest_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, &val,
+	int ret;
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memory_slot *slot;
+	gfn_t gfn = vcpu->arch.pv_eoi.data.gpa >> PAGE_SHIFT;
+	ret = kvm_dsm_vcpu_acquire_page(vcpu, &slot, gfn, true);
+	if (ret < 0)
+		return ret;
+#endif
+	ret = kvm_write_guest_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, &val,
 				      sizeof(val));
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release_page(vcpu, slot, gfn);
+#endif
+	return ret;
 }
 
 static int pv_eoi_get_user(struct kvm_vcpu *vcpu, u8 *val)
 {
-
-	return kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, val,
+	int ret;
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memory_slot *slot;
+	gfn_t gfn = vcpu->arch.pv_eoi.data.gpa >> PAGE_SHIFT;
+	ret = kvm_dsm_vcpu_acquire_page(vcpu, &slot, gfn, true);
+	if (ret < 0)
+		return ret;
+#endif
+	ret = kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, val,
 				      sizeof(*val));
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release_page(vcpu, slot, gfn);
+#endif
+	return ret;
 }
 
 static inline bool pv_eoi_enabled(struct kvm_vcpu *vcpu)
@@ -2555,6 +2583,14 @@ static int kvm_lapic_reg_write(struct kvm_lapic *apic, u32 reg, u32 val)
 	return ret;
 }
 
+#ifdef CONFIG_KVM_DSM
+int kvm_lapic_reg_write_remote(struct kvm_lapic *apic, u32 reg, u32 val, u32 dest_id)
+{
+	return kvm_lapic_reg_write(apic, reg, val);
+}
+EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_lapic_reg_write_remote);
+#endif
+
 static int apic_mmio_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this,
 			    gpa_t address, int len, const void *data)
 {
@@ -2582,6 +2618,32 @@ static int apic_mmio_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this,
 		return 0;
 
 	val = *(u32*)data;
+
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	u32 reg = (offset & 0xff0);
+	if ((reg == APIC_ICR || reg == APIC_ICR2)) {
+	    u32 dest_id = 0;
+        kvm_lapic_reg_write(apic, reg, val);
+        if (reg == APIC_ICR) {
+            if (apic_x2apic_mode(apic)) {
+                dest_id = kvm_lapic_get_reg(apic, APIC_ICR2);
+            } else {
+                dest_id = GET_XAPIC_DEST_FIELD(kvm_lapic_get_reg(apic, APIC_ICR2));
+            }
+        } else {
+            dest_id = GET_XAPIC_DEST_FIELD(val);
+        }
+        
+        vcpu->arch.dsm_irq_forward_pending = true;
+        vcpu->arch.dsm_irq_forward_reg = reg;
+        vcpu->arch.dsm_irq_forward_val = val;
+        vcpu->arch.dsm_irq_forward_dest_id = dest_id;
+        
+        kvm_make_request(KVM_REQ_DSM_IRQ_FORWARD, vcpu);
+        
+        return 0;
+    }
+#endif
 
 	kvm_lapic_reg_write(apic, offset & 0xff0, val);
 
@@ -3355,11 +3417,23 @@ void kvm_lapic_sync_from_vapic(struct kvm_vcpu *vcpu)
 	if (!test_bit(KVM_APIC_CHECK_VAPIC, &vcpu->arch.apic_attention))
 		return;
 
-	if (kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.apic->vapic_cache, &data,
-				  sizeof(u32)))
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memslots *slots;
+	if (kvm_dsm_vcpu_acquire(vcpu, &slots, vcpu->arch.apic->vapic_cache.gpa,
+				  sizeof(u32), false) < 0)
 		return;
+#endif
+
+	if (kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.apic->vapic_cache, &data, sizeof(u32)))
+		goto out;
 
 	apic_set_tpr(vcpu->arch.apic, data & 0xff);
+
+out:
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release(vcpu, slots, vcpu->arch.apic->vapic_cache.gpa,
+				  sizeof(u32));
+#endif
 }
 
 /*
@@ -3408,8 +3482,18 @@ void kvm_lapic_sync_to_vapic(struct kvm_vcpu *vcpu)
 		max_isr = 0;
 	data = (tpr & 0xff) | ((max_isr & 0xf0) << 8) | (max_irr << 24);
 
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memslots *slots;
+	if (kvm_dsm_vcpu_acquire(vcpu, &slots, vcpu->arch.apic->vapic_cache.gpa,
+				sizeof(u32), true) < 0)
+		return;
+#endif
 	kvm_write_guest_cached(vcpu->kvm, &vcpu->arch.apic->vapic_cache, &data,
 				sizeof(u32));
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release(vcpu, slots, vcpu->arch.apic->vapic_cache.gpa,
+				sizeof(u32));
+#endif
 }
 
 int kvm_lapic_set_vapic_addr(struct kvm_vcpu *vcpu, gpa_t vapic_addr)
