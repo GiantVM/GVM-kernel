@@ -11,17 +11,17 @@
 #include "hyperv.h"
 #include "smm.h"
 
-#define KVM_APIC_INIT		0
-#define KVM_APIC_SIPI		1
+#define KVM_APIC_INIT 0
+#define KVM_APIC_SIPI 1
 
-#define APIC_SHORT_MASK			0xc0000
-#define APIC_DEST_NOSHORT		0x0
-#define APIC_DEST_MASK			0x800
+#define APIC_SHORT_MASK 0xc0000
+#define APIC_DEST_NOSHORT 0x0
+#define APIC_DEST_MASK 0x800
 
-#define APIC_BUS_CYCLE_NS_DEFAULT	1
+#define APIC_BUS_CYCLE_NS_DEFAULT 1
 
-#define APIC_BROADCAST			0xFF
-#define X2APIC_BROADCAST		0xFFFFFFFFul
+#define APIC_BROADCAST 0xFF
+#define X2APIC_BROADCAST 0xFFFFFFFFul
 
 #define X2APIC_MSR(r) (APIC_BASE_MSR + ((r) >> 4))
 
@@ -81,14 +81,14 @@ enum lapic_lvt_entry {
 
 struct kvm_timer {
 	struct hrtimer timer;
-	s64 period; 				/* unit: ns */
+	s64 period; /* unit: ns */
 	ktime_t target_expiration;
 	u32 timer_mode;
 	u32 timer_mode_mask;
 	u64 tscdeadline;
 	u64 expired_tscdeadline;
 	u32 timer_advance_ns;
-	atomic_t pending;			/* accumulated triggered timers */
+	atomic_t pending; /* accumulated triggered timers */
 	bool hv_timer_in_use;
 };
 
@@ -138,10 +138,11 @@ void kvm_lapic_set_eoi(struct kvm_vcpu *vcpu);
 void kvm_apic_set_version(struct kvm_vcpu *vcpu);
 void kvm_apic_after_set_mcg_cap(struct kvm_vcpu *vcpu);
 bool kvm_apic_match_dest(struct kvm_vcpu *vcpu, struct kvm_lapic *source,
-			   int shorthand, unsigned int dest, int dest_mode);
+			 int shorthand, unsigned int dest, int dest_mode);
 void kvm_apic_clear_irr(struct kvm_vcpu *vcpu, int vec);
 bool __kvm_apic_update_irr(unsigned long *pir, void *regs, int *max_irr);
-bool kvm_apic_update_irr(struct kvm_vcpu *vcpu, unsigned long *pir, int *max_irr);
+bool kvm_apic_update_irr(struct kvm_vcpu *vcpu, unsigned long *pir,
+			 int *max_irr);
 void kvm_apic_update_ppr(struct kvm_vcpu *vcpu);
 int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
 		     struct rtc_status *rtc_status);
@@ -167,6 +168,10 @@ void kvm_apic_send_ipi(struct kvm_lapic *apic, u32 icr_low, u32 icr_high);
 int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
 		    unsigned long ipi_bitmap_high, u32 min,
 		    unsigned long icr, int op_64_bit);
+#ifdef CONFIG_KVM_DSM
+int kvm_lapic_reg_write_remote(struct kvm_lapic *apic, u32 reg, u32 val,
+			       u32 dest_id);
+#endif
 
 int kvm_apic_set_base(struct kvm_vcpu *vcpu, u64 value, bool host_initiated);
 int kvm_apic_get_state(struct kvm_vcpu *vcpu, struct kvm_lapic_state *s);
@@ -264,13 +269,13 @@ static inline bool kvm_apic_has_pending_init_or_sipi(struct kvm_vcpu *vcpu)
 
 static inline bool kvm_apic_init_sipi_allowed(struct kvm_vcpu *vcpu)
 {
-	return !is_smm(vcpu) &&
-	       !kvm_x86_call(apic_init_signal_blocked)(vcpu);
+	return !is_smm(vcpu) && !kvm_x86_call(apic_init_signal_blocked)(vcpu);
 }
 
 static inline int kvm_lapic_latched_init(struct kvm_vcpu *vcpu)
 {
-	return lapic_in_kernel(vcpu) && test_bit(KVM_APIC_INIT, &vcpu->arch.apic->pending_events);
+	return lapic_in_kernel(vcpu) &&
+	       test_bit(KVM_APIC_INIT, &vcpu->arch.apic->pending_events);
 }
 
 static inline u16 kvm_lapic_irq_dest_mode(bool dest_mode_logical)
