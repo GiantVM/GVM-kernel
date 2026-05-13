@@ -131,6 +131,11 @@
 #define KVM_REQ_UPDATE_PROTECTED_GUEST_STATE \
 	KVM_ARCH_REQ_FLAGS(34, KVM_REQUEST_WAIT)
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+#define KVM_REQ_DSM_IRQ_FORWARD	\
+	KVM_ARCH_REQ(33)
+#endif
+
 #define CR0_RESERVED_BITS                                               \
 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
 			  | X86_CR0_ET | X86_CR0_NE | X86_CR0_WP | X86_CR0_AM \
@@ -171,6 +176,11 @@
 #define KVM_NR_VAR_MTRR 8
 
 #define ASYNC_PF_PER_VCPU 64
+
+#ifdef CONFIG_KVM_DSM
+#define KVM_MEM_SLOTS_NUM SHRT_MAX
+#define KVM_USER_MEM_SLOTS (KVM_MEM_SLOTS_NUM - KVM_INTERNAL_MEM_SLOTS)
+#endif
 
 enum kvm_reg {
 	VCPU_REGS_RAX = __VCPU_REGS_RAX,
@@ -1074,6 +1084,14 @@ struct kvm_vcpu_arch {
 	/* AMD MSRC001_0015 Hardware Configuration */
 	u64 msr_hwcr;
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	/* DSM interrupt forwarding */
+	bool dsm_irq_forward_pending;
+	u32 dsm_irq_forward_reg;
+	u32 dsm_irq_forward_val;
+	u32 dsm_irq_forward_dest_id;
+#endif
+
 	/* pv related cpuid info */
 	struct {
 		/*
@@ -1122,6 +1140,82 @@ struct kvm_vcpu_arch {
 struct kvm_lpage_info {
 	int disallow_lpage;
 };
+
+#ifdef CONFIG_KVM_DSM
+#include "../kvm/ktcp.h"
+typedef struct ktcp_cb kconnection_t;
+
+/*
+ * copyset is actually uint16_t. Hacking here is used for compatibility with
+ * bitmap ops in linux kernel.
+ */
+typedef unsigned long copyset_t;
+
+/*
+ * uint32_t may wraparound and potientally ruin everything.
+ * FIXME!
+ */
+typedef u32 version_t;
+typedef u32 timestamp_t;
+
+#define KVM_DSM_W_SHARED
+
+#define DSM_MAX_INSTANCES 16
+
+/*
+ * Besides data, each transation is binded with an addtional data structure.
+ */
+typedef struct tx_add {
+	/*
+	 * Nodes indicated by inv_copyset should be sent INV messages upon write
+	 * fault. It's also used to transfer the complete copyset upon read fault.
+	 */
+	u16 inv_copyset;
+	/* Pages with different versions MAY have different data. */
+	u16 version;
+	/*
+	 * (Hopefully) unique transcation id, which is used to eliminate the
+	 * necessity of per-socket locks.
+	 */
+	u16 txid;
+} tx_add_t;
+
+struct kvm_dsm_info {
+	unsigned int state;
+	DECLARE_BITMAP(copyset, DSM_MAX_INSTANCES);
+	struct mutex fast_path_lock; /* protects fast_path_locked */
+	atomic_t fast_path_locked;
+	atomic_t pinned_read;
+	atomic_t pinned_write;
+	struct mutex lock; /* protects DSM state changes */
+	version_t version;
+};
+
+struct kvm_dsm_memory_slot {
+	hfn_t base_vfn;
+	unsigned long npages;
+	struct kvm_rmap_head *rmap;
+
+	// struct kvm_dsm_rmap *dsm_rmap;
+	/*
+	 * gfn->vfn mapping exists in memslot. However, memslot can be modified on
+	 * the initialization period many times. Specifcally, create & delete memory
+	 * region by QEMU. backup_rmap records previous rmap when memslot is
+	 * deleted and get deleted when memslot is added. Its main attempt is to
+	 * find old vfn when new added memslot changes gfn->vfn mapping. We need to
+	 * copy old dsm state to new one to keep consistency.
+	 */
+	struct kvm_rmap_head *backup_rmap;
+	struct mutex *rmap_lock;
+	struct kvm_dsm_info *vfn_dsm_state;
+};
+
+struct kvm_dsm_memslots {
+	struct kvm_dsm_memory_slot memslots[KVM_MEM_SLOTS_NUM];
+	atomic_t lru_slot;
+	int used_slots;
+};
+#endif /* CONFIG_KVM_DSM */
 
 struct kvm_arch_memory_slot {
 	struct kvm_rmap_head *rmap[KVM_NR_PAGE_SIZES];
@@ -1666,6 +1760,25 @@ struct kvm_arch {
 	 * current VM.
 	 */
 	int cpu_dirty_log_size;
+
+#ifdef CONFIG_KVM_DSM
+	bool dsm_enabled;
+	int dsm_id;
+	struct kvm_dsm_memslots *dsm_hvaslots;
+	struct mutex dsm_lock; /* protects DSM slot operations */
+	struct mutex conn_init_lock; /* protects connection initialization */
+
+	struct task_struct *dsm_thread;
+	kconnection_t **dsm_conn_socks;
+	bool dsm_stopped;
+
+	u32 cluster_iplist_len;
+	char **cluster_iplist;
+
+#elif defined(CONFIG_KVM_DSM_IRQ_FORWARD)
+	int dsm_id;
+
+#endif /* CONFIG_KVM_DSM */
 };
 
 struct kvm_vm_stat {

@@ -14437,6 +14437,18 @@ S:	Supported
 T:	git git://git.kernel.org/pub/scm/virt/kvm/kvm.git
 F:	arch/x86/kvm/xen.*
 
+KVM DSM (Distributed Shared Memory)
+M:	Xiong Tianlei <qmyyxtl@sjtu.edu.cn>
+M:	Xu Kailiang <xukl2019@sjtu.edu.cn>
+M:	Han Fengze <adoniswhite926@gmail.com>
+L:	kvm@vger.kernel.org
+S:	Maintained
+F:	arch/x86/kvm/dsm.*
+F:	arch/x86/kvm/dsm-util.*
+F:	arch/x86/kvm/ivy.*
+F:	arch/x86/kvm/ktcp.*
+F:	Documentation/virt/kvm/x86/dsm.rst
+
 L3MDEV
 M:	David Ahern <dsahern@kernel.org>
 L:	netdev@vger.kernel.org
