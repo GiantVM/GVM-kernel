@@ -6,6 +6,8 @@
  *
  * Copyright (C) 2006 Qumranet, Inc.
  * Copyright 2020 Red Hat, Inc. and/or its affiliates.
+ * Copyright (C) 2019-2026, Trusted Cloud Group, Institute of Scalable Computing,
+ * Shanghai Jiao Tong University.
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -43,6 +45,11 @@ u64 __read_mostly shadow_acc_track_mask;
 
 u64 __read_mostly shadow_nonpresent_or_rsvd_mask;
 u64 __read_mostly shadow_nonpresent_or_rsvd_lower_gfn_mask;
+
+#ifdef CONFIG_KVM_DSM
+u64 __read_mostly shadow_dsm_writable_mask;
+#endif
+
 
 static u8 __init kvm_get_host_maxphyaddr(void)
 {
@@ -247,12 +254,38 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	else
 		pte_access &= ~ACC_WRITE_MASK;
 
+
+#ifdef CONFIG_KVM_DSM
+	/*
+	 * We set SPTE_DSM_WRITEABLE only when the page is in DSM_MODIFIED state,
+	 * so that pages that should be write protected according to DSM protocol
+	 * will not be erroneously "fixed" by fast_page_fault. When we are not in
+	 * DSM mode, all pages are always in DSM_MODIFIED state effectively.
+	 */
+	if (!vcpu->kvm->arch.dsm_enabled){
+		spte |= shadow_dsm_writable_mask;
+	}
+#endif
+
 	if (shadow_me_value && !kvm_is_mmio_pfn(pfn, &is_host_mmio))
 		spte |= shadow_me_value;
 
 	spte |= (u64)pfn << PAGE_SHIFT;
 
 	if (pte_access & ACC_WRITE_MASK) {
+#ifdef CONFIG_KVM_DSM
+		spte |= PT_WRITABLE_MASK | shadow_mmu_writable_mask | shadow_dsm_writable_mask;
+
+		/*
+		 * Optimization: for pte sync, if spte was writable the hash
+		 * lookup is unnecessary (and expensive). Write protection
+		 * is responsibility of kvm_mmu_get_page / kvm_mmu_sync_roots.
+		 * Same reasoning can be applied to dirty page accounting.
+		 */
+		if (is_writable_pte(old_spte))
+			goto out;
+
+#endif
 		/*
 		 * Unsync shadow pages that are reachable by the new, writable
 		 * SPTE.  Write-protect the SPTE if the page can't be unsync'd,
@@ -274,6 +307,9 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 				shadow_dirty_mask;
 	}
 
+#ifdef CONFIG_KVM_DSM
+out:
+#endif
 	if (prefetch && !synchronizing)
 		spte = mark_spte_for_access_track(spte);
 
@@ -505,6 +541,9 @@ void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only)
 	shadow_acc_track_mask	= VMX_EPT_RWX_MASK;
 	shadow_host_writable_mask = EPT_SPTE_HOST_WRITABLE;
 	shadow_mmu_writable_mask  = EPT_SPTE_MMU_WRITABLE;
+#ifdef CONFIG_KVM_DSM
+	shadow_dsm_writable_mask = DEFAULT_SPTE_DSM_WRITEABLE;
+#endif
 
 	/*
 	 * EPT Misconfigurations are generated if the value of bits 2:0
@@ -559,6 +598,9 @@ void kvm_mmu_reset_all_pte_masks(void)
 
 	shadow_host_writable_mask = DEFAULT_SPTE_HOST_WRITABLE;
 	shadow_mmu_writable_mask  = DEFAULT_SPTE_MMU_WRITABLE;
+#ifdef CONFIG_KVM_DSM
+	shadow_dsm_writable_mask = DEFAULT_SPTE_DSM_WRITEABLE;
+#endif
 
 	/*
 	 * Set a reserved PA bit in MMIO SPTEs to generate page faults with

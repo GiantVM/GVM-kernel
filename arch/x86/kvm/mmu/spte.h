@@ -81,6 +81,9 @@ static_assert(!(SPTE_TDP_AD_MASK & SHADOW_ACC_TRACK_SAVED_MASK));
 /* Bits 9 and 10 are ignored by all non-EPT PTEs. */
 #define DEFAULT_SPTE_HOST_WRITABLE	BIT_ULL(9)
 #define DEFAULT_SPTE_MMU_WRITABLE	BIT_ULL(10)
+#ifdef CONFIG_KVM_DSM
+#define DEFAULT_SPTE_DSM_WRITEABLE	BIT_ULL(11)
+#endif
 
 /*
  * Low ignored bits are at a premium for EPT, use high ignored bits, taking care
@@ -568,5 +571,26 @@ static inline u64 restore_acc_track_spte(u64 spte)
 
 void __init kvm_mmu_spte_module_init(void);
 void kvm_mmu_reset_all_pte_masks(void);
+
+#ifdef CONFIG_KVM_DSM
+static inline u64 spte_shadow_accessed_mask(u64 spte)
+{
+	KVM_MMU_WARN_ON(!is_shadow_present_pte(spte));
+	return spte_ad_enabled(spte) ? shadow_accessed_mask : 0;
+}
+
+static inline u64 spte_shadow_dirty_mask(u64 spte)
+{
+	KVM_MMU_WARN_ON(!is_shadow_present_pte(spte));
+	return spte_ad_enabled(spte) ? shadow_dirty_mask : 0;
+}
+
+static inline bool is_dirty_spte(u64 spte)
+{
+	u64 dirty_mask = spte_shadow_dirty_mask(spte);
+
+	return dirty_mask ? spte & dirty_mask : spte & PT_WRITABLE_MASK;
+}
+#endif
 
 #endif

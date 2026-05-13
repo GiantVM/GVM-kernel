@@ -288,6 +288,11 @@ struct kvm_page_fault {
 	 * is changing its own translation in the guest page tables.
 	 */
 	bool write_fault_to_shadow_pgtable;
+
+#ifdef CONFIG_KVM_DSM
+	/* DSM access rights mask for the faulting page. */
+	int dsm_access;
+#endif
 };
 
 int kvm_tdp_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
