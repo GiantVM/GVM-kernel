@@ -8,6 +8,8 @@
  * Copyright (C) 2008 Qumranet, Inc.
  * Copyright IBM Corporation, 2008
  * Copyright 2010 Red Hat, Inc. and/or its affiliates.
+ * Copyright (C) 2019-2026, Trusted Cloud Group, Institute of Scalable Computing,
+ * Shanghai Jiao Tong University.
  *
  * Authors:
  *   Avi Kivity   <avi@qumranet.com>
@@ -33,6 +35,10 @@
 #include "lapic.h"
 #include "xen.h"
 #include "smm.h"
+
+#ifdef CONFIG_KVM_DSM
+#include "dsm.h"
+#endif
 
 #include <linux/clocksource.h>
 #include <linux/interrupt.h>
@@ -4857,6 +4863,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 #ifdef CONFIG_X86_SGX_KVM
 	case KVM_CAP_SGX_ATTRIBUTE:
 #endif
+#ifdef CONFIG_KVM_DSM
+	case KVM_CAP_X86_DSM:
+#endif
 	case KVM_CAP_VM_COPY_ENC_CONTEXT_FROM:
 	case KVM_CAP_VM_MOVE_ENC_CONTEXT_FROM:
 	case KVM_CAP_SREGS2:
@@ -7629,7 +7638,11 @@ set_pit2_out:
 		break;
 	}
 	default:
-		r = -ENOTTY;
+		#ifdef CONFIG_KVM_DSM
+			r = kvm_vm_ioctl_dsm(kvm, ioctl, arg);
+		#else
+			r = -ENOTTY;
+		#endif
 	}
 out:
 	return r;
@@ -7943,8 +7956,17 @@ static int kvm_fetch_guest_virt(struct x86_emulate_ctxt *ctxt,
 	offset = addr & (PAGE_SIZE-1);
 	if (WARN_ON(offset + bytes > PAGE_SIZE))
 		bytes = (unsigned)PAGE_SIZE - offset;
+	
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memory_slot *slot;
+	if (kvm_dsm_vcpu_acquire_page(vcpu, &slot, gpa >> PAGE_SHIFT, false) < 0)
+		return X86EMUL_IO_NEEDED;
+#endif
 	ret = kvm_vcpu_read_guest_page(vcpu, gpa >> PAGE_SHIFT, val,
 				       offset, bytes);
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release_page(vcpu, slot, gpa >> PAGE_SHIFT);
+#endif
 	if (unlikely(ret < 0))
 		return X86EMUL_IO_NEEDED;
 
@@ -8131,7 +8153,17 @@ struct read_write_emulator_ops {
 static int emulator_read_guest(struct kvm_vcpu *vcpu, gpa_t gpa,
 			       void *val, int bytes)
 {
-	return !kvm_vcpu_read_guest(vcpu, gpa, val, bytes);
+	int r;
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memslots *slots;
+	if (kvm_dsm_vcpu_acquire(vcpu, &slots, gpa, bytes, false) < 0)
+		return 0;
+#endif
+	r = kvm_vcpu_read_guest(vcpu, gpa, val, bytes);
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release(vcpu, slots, gpa, bytes);
+#endif
+	return !r;
 }
 
 static int emulator_write_guest(struct kvm_vcpu *vcpu, gpa_t gpa,
@@ -8139,7 +8171,15 @@ static int emulator_write_guest(struct kvm_vcpu *vcpu, gpa_t gpa,
 {
 	int ret;
 
+#ifdef CONFIG_KVM_DSM
+	struct kvm_memslots *slots;
+	if (kvm_dsm_vcpu_acquire(vcpu, &slots, gpa, bytes, true) < 0)
+		return 0;
+#endif
 	ret = kvm_vcpu_write_guest(vcpu, gpa, val, bytes);
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_vcpu_release(vcpu, slots, gpa, bytes);
+#endif
 	if (ret < 0)
 		return 0;
 	kvm_page_track_write(vcpu, gpa, val, bytes);
@@ -11333,6 +11373,22 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 				goto out;
 			}
 		}
+
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+
+		if (kvm_check_request(KVM_REQ_DSM_IRQ_FORWARD, vcpu)) {
+			vcpu->run->exit_reason = KVM_EXIT_DSM_SEND_IRQ;
+			vcpu->run->lapic_irq.id = vcpu->vcpu_id;
+			vcpu->run->lapic_irq.val = vcpu->arch.dsm_irq_forward_reg;
+			vcpu->run->lapic_irq.val2 = vcpu->arch.dsm_irq_forward_val;
+			vcpu->run->lapic_irq.dest_id = vcpu->arch.dsm_irq_forward_dest_id;
+			
+			vcpu->arch.dsm_irq_forward_pending = false;
+			
+			r = 0;
+			goto out;
+		}
+#endif
 	}
 
 	if (kvm_check_request(KVM_REQ_EVENT, vcpu) || req_int_win ||
@@ -13366,6 +13422,13 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	raw_spin_lock_init(&kvm->arch.tsc_write_lock);
 	mutex_init(&kvm->arch.apic_map_lock);
 	seqcount_raw_spinlock_init(&kvm->arch.pvclock_sc, &kvm->arch.tsc_write_lock);
+
+#ifdef CONFIG_KVM_DSM
+	ret = kvm_dsm_alloc(kvm);
+	if (ret < 0)
+		goto out_uninit_mmu;
+#endif
+
 	kvm->arch.kvmclock_offset = -get_kvmclock_base_ns();
 
 	raw_spin_lock_irqsave(&kvm->arch.tsc_write_lock, flags);
@@ -13527,6 +13590,9 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_xen_destroy_vm(kvm);
 	kvm_hv_destroy_vm(kvm);
 	kvm_x86_call(vm_destroy)(kvm);
+#ifdef CONFIG_KVM_DSM
+	kvm_dsm_free(kvm);
+#endif
 }
 
 static void memslot_rmap_free(struct kvm_memory_slot *slot)
@@ -13632,6 +13698,13 @@ static int kvm_alloc_memslot_metadata(struct kvm *kvm,
 	if (kvm_page_track_create_memslot(kvm, slot, npages))
 		goto out_free;
 
+#ifdef CONFIG_KVM_DSM
+	if (kvm_dsm_register_memslot_hva(kvm, slot, npages)) {
+		kvm_page_track_free_memslot(slot);
+		goto out_free;
+	}
+#endif
+
 	return 0;
 
 out_free:
@@ -13679,7 +13752,11 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 		if (kvm_is_gfn_alias(kvm, new->base_gfn + new->npages - 1))
 			return -EINVAL;
 
-		return kvm_alloc_memslot_metadata(kvm, new);
+		int ret = kvm_alloc_memslot_metadata(kvm, new);
+#ifdef CONFIG_KVM_DSM
+		kvm_dsm_add_memslot(kvm, new, new->as_id);
+#endif
+		return ret;
 	}
 
 	if (change == KVM_MR_FLAGS_ONLY)
