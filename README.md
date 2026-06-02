@@ -1,4 +1,4 @@
-# GVM Kernel
+# GVM-Kernel
 
 GiantVM is a many-to-one virtualization framework built atop the QEMU/KVM hypervisor that consolidates multiple physical servers into a unified virtual machine
 
