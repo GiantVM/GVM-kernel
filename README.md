@@ -307,4 +307,4 @@ of the project:
 
 ## Contact
 
-For inquiries about our work, please contact tcloud.sjtu@gmail.com
+For questions or technical discussions related to GiantVM, please reach out to the project team at tcloud.sjtu@gmail.com
