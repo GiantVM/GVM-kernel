@@ -2,10 +2,11 @@
 
 This guide describes how to download the required Linux kernel source, apply the GiantVM kernel patches, prepare the provided static QEMU package, replace the host kernel, and start a two-node GiantVM instance.
 
+## Installation
 
-## 1. Obtain the Kernel Source
+### 1. Obtain the Kernel Source
 
-### Option 1.Download Linux 7.1.0-rc3 and Apply GiantVM Patches
+#### Option 1.Download Linux 7.1.0-rc3 and Apply GiantVM Patches
 
 The required kernel version is `7.1.0-rc3`.
 
@@ -43,13 +44,13 @@ for patch in GVM-patches/000*.patch; do
     patch -p1 < "$patch"
 done
 ```
-### Option 2.Clone the GiantVM Kernel Repository
+#### Option 2.Clone the GiantVM Kernel Repository
 
 ```bash
 git clone https://github.com/GiantVM/GVM-kernel.git
 ```
 
-## 2. Prepare the Provided Static QEMU Package
+### 2. Prepare the Provided Static QEMU Package
 
 The GiantVM QEMU runtime is provided as a prebuilt static package. It includes `qemu-system-x86_64` and the matching `pc-bios` directory.
 
@@ -77,7 +78,7 @@ The expected QEMU version is `QEMU emulator version 10.1.2`.
 
 The GVM-qemu source code is available at https://github.com/GiantVM/GVM-qemu. Interested users are welcome to build and test it from source. We also plan to organize the GVM-related QEMU changes and submit them to the upstream QEMU community.
 
-## 3. Build the Kernel and Replace the System Kernel
+### 3. Build the Kernel and Replace the System Kernel
 
 Enter the GiantVM kernel source directory — this should be either the patched `linux-7.1-rc3` source tree from Option 1 or the cloned `GVM-kernel` repository from Option 2. GVM-kernel is used uniformly in the following steps.
 
@@ -155,7 +156,7 @@ uname -r
 
 The expected kernel version is: `7.1.0-rc3`
 
-## 4. Start GiantVM Nodes
+### 4. Start GiantVM Nodes
 
 Download the guest kernel image and system image before starting the nodes.
 
