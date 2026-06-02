@@ -9,7 +9,7 @@ The `main` branch hosts the DSM (Distributed Shared Memory) version of GiantVM, 
 
 The `shared-memory` branch hosts our code that utilizes shared memory as the underlying communication and memory access mechanism for GiantVM.
 
-We are actively expanding GiantVM across multiple interconnects and hardware platforms. RDMA support and CXL support have been completed and will be released soon. Huawei UnifiedBus support has also been completed and is currently under testing. ARM architecture support is under active development and close to completion, while RISC-V support is planned for future work.
+We are actively expanding GiantVM across multiple interconnects and hardware platforms. `RDMA` support and `CXL` support have been completed and will be released soon. `Huawei UnifiedBus` support has also been completed and is currently under testing. `ARM` architecture support is under active development and close to completion, while `RISC-V` support is planned for future work.
 
 ## Installation
 
