@@ -266,23 +266,39 @@ to deeply thank all contributors who made this possible across different phases
 of the project:
 
 [Initial Project Development - Linux 4.19 era]
+
   Ding Zhuocheng <tcbbd@sjtu.edu.cn>
+  
   Chen Yubin <binsschen@sjtu.edu.cn>
+  
   Zhang Jin <jzhang3002@sjtu.edu.cn>
+  
   Wang Yun <yunwang94@sjtu.edu.cn>
+  
   Ma Jiacheng <jiacheng.ma@amd.com>
+  
   Yu Boshi <201608ybs@sjtu.edu.cn>
+  
   Jia Xingguo <jiaxg1998@sjtu.edu.cn>
+  
   Chen Weiye <vorringer@sjtu.edu.cn>
+  
   Wu Chenggang <wuchenggang@sjtu.edu.cn>
+  
   Xiang Yuxin <xiangyuxin@sjtu.edu.cn>
 
 [Modernization, Upstream Development, and Active Maintenance]
+
   Xiong Tianlei <qmyyxtl@sjtu.edu.cn>
+  
   Xu Kailiang <xukl2019@sjtu.edu.cn>
+  
   Xue Songtao <xxxlhhxz@sjtu.edu.cn>
+  
   Shou Muliang <muliang.shou@sjtu.edu.cn>
+  
   Han Fengze <adoniswhite926@gmail.com>
+  
   Ren Luobin <renluobin0257@gmail.com>
 
 ## Contact
