@@ -13,6 +13,8 @@ We are actively expanding GiantVM across multiple interconnects and hardware pla
 
 ## Installation
 
+This guide describes how to download the required Linux kernel source, apply the GiantVM kernel patches, prepare the provided static QEMU package, replace the host kernel, and start a two-node GiantVM instance.
+
 ### Step 1. Obtain the Kernel Source
 
 #### Option 1.Download Linux 7.1.0-rc3 and Apply GiantVM Patches
