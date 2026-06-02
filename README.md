@@ -1,6 +1,12 @@
-# GiantVM Installation Guide
+# GVM Kernel
 
-This guide describes how to download the required Linux kernel source, apply the GiantVM kernel patches, prepare the provided static QEMU package, replace the host kernel, and start a two-node GiantVM instance.
+GiantVM is a many-to-one virtualization framework built atop the QEMU/KVM hypervisor that consolidates multiple physical servers into a unified virtual machine
+
+Our core technical approach provides a Single System Image without requiring any modifications to the Guest OS or userspace applications.
+
+## Introduction
+
+The main branch hosts our code on GiantVM with DSM (Distributed Shared Memory) modifications. You can try it out with TCP/IP. 
 
 ## Installation
 
