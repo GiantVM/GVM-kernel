@@ -159,7 +159,7 @@ sudo reboot
 
 During reboot, select the newly installed GiantVM kernel from the GRUB menu.
 
-After the system comes back up, verify that the active kernel are available:
+After the system comes back up, verify that the active kernel is available:
 
 ```bash
 uname -r
