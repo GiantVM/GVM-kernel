@@ -18,6 +18,12 @@ tar -xf $tag.tar.gz
 cd linux-7.1-rc3
 ```
 
+Download address for the patch package:
+
+```text
+https://drive.google.com/file/d/1DJomV48ciQdzWfxLOaPnRxVhJQnOll4w/view?usp=sharing
+```
+
 Copy the patch package into the kernel source directory:
 
 ```bash
