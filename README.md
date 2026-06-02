@@ -203,8 +203,6 @@ qemu_args=(
 
 Update `QEMU_PATH` to point to the provided static `qemu-system-x86_64` binary. Update `BIOS_PATH` to point to the `pc-bios` directory from the same QEMU package. Update `KERNEL_PATH` to point to the downloaded guest kernel image. Update `ROOTFS_PATH` to point to the downloaded system image.
 
-### Two-Node Startup Example
-
 Create `start-node0.sh` in the same directory as `start-common.sh`:
 
 ```bash
