@@ -108,9 +108,13 @@ make menuconfig
 ```
 
 In `menuconfig`, enter the `Virtualization` submenu and enable the following options:
+
 ->Virtualization
+
  ->[*]KVM DSM interrupt forwarding support(Press 'Y' to enable)
+ 
   ->[*]KVM distributed software memory support(Press 'Y' to enable)
+  
 `KVM distributed software memory support` depends on `KVM DSM interrupt forwarding support`. Enable `KVM DSM interrupt forwarding support` first, then enable `KVM distributed software memory support`.
 
 After enabling the option, save the kernel configuration and exit `menuconfig`.
