@@ -219,7 +219,7 @@ source start-common.sh
 
 qemu_args+=(
     -local-cpu cpus=2,start=0,iplist="0.0.0.0 0.0.0.0"
-    -shm /qemu_shared
+    -shm-path /dev/shm/qemu_shared
     -vnc :0
 )
 "$QEMU_PATH" "${qemu_args[@]}"
@@ -234,7 +234,7 @@ source start-common.sh
 
 qemu_args+=(
     -local-cpu cpus=2,start=2,iplist="0.0.0.0 0.0.0.0"
-    -shm /qemu_shared
+    -shm-path /dev/shm/qemu_shared
 )
 "$QEMU_PATH" "${qemu_args[@]}"
 ```
