@@ -127,6 +127,11 @@
 #define KVM_REQ_UPDATE_PROTECTED_GUEST_STATE \
 	KVM_ARCH_REQ_FLAGS(34, KVM_REQUEST_WAIT)
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+#define KVM_REQ_DSM_IRQ_FORWARD \
+	KVM_ARCH_REQ(35)
+#endif
+
 #define INVALID_PAGE (~(hpa_t)0)
 #define VALID_PAGE(x) ((x) != INVALID_PAGE)
 
@@ -986,6 +991,15 @@ struct kvm_vcpu_arch {
 	/* AMD MSRC001_0015 Hardware Configuration */
 	u64 msr_hwcr;
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	/* DSM interrupt forwarding */
+	u32 dsm_irq_forward_type;
+	u32 dsm_irq_forward_val;
+	u32 dsm_irq_forward_val2;
+	u32 dsm_irq_forward_dest_id;
+	u64 dsm_irq_forward_data;
+#endif
+
 	/* pv related cpuid info */
 	struct {
 		/*
@@ -1413,6 +1427,11 @@ struct kvm_arch {
 	 * current VM.
 	 */
 	int cpu_dirty_log_size;
+
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	int dsm_id;
+	bool dsm_irq_forward_enabled;
+#endif
 };
 
 struct kvm_vm_stat {
