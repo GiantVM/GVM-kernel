@@ -2583,6 +2583,17 @@ static int kvm_lapic_reg_write(struct kvm_lapic *apic, u32 reg, u32 val)
 	return ret;
 }
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+int kvm_lapic_reg_write_remote(struct kvm_lapic *apic, u32 reg, u32 val, u32 dest_id)
+{
+	if (reg == APIC_ICR)
+		kvm_lapic_set_reg(apic, APIC_ICR2, SET_XAPIC_DEST_FIELD(dest_id));
+
+	return kvm_lapic_reg_write(apic, reg, val);
+}
+EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_lapic_reg_write_remote);
+#endif
+
 static int apic_mmio_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this,
 			    gpa_t address, int len, const void *data)
 {
