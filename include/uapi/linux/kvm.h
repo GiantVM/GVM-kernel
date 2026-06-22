@@ -227,6 +227,34 @@ struct kvm_exit_snp_req_certs {
 #define HINT_UNSAFE_IN_KVM(_symbol) _symbol
 #endif
 
+struct kvm_dipi_params {
+	__u32 vcpu_id;
+	__u32 val;
+	__u32 val2;
+	__u32 dest_id;
+};
+
+#define KVM_DSM_IPI _IOW(KVMIO,  0xf3, struct kvm_dipi_params)
+
+struct kvm_x2apic_params {
+	__u32 vcpu_id;
+	__u32 pad;
+	__u64 data;
+};
+
+#define KVM_DSM_X2APIC _IOW(KVMIO, 0xf4, struct kvm_x2apic_params)
+
+struct kvm_apic_base_params {
+	__u32 vcpu_id;
+	__u8 host;
+	__u8 pad0[3];
+	__u32 index;
+	__u32 pad1;
+	__u64 data;
+};
+
+#define KVM_DSM_APIC_BASE         _IOW(KVMIO, 0xf5, struct kvm_apic_base_params)
+
 /* for KVM_RUN, returned by mmap(vcpu_fd, offset=0) */
 struct kvm_run {
 	/* in */

@@ -7630,6 +7630,89 @@ set_pit2_out:
 		r = kvm_vm_ioctl_set_msr_filter(kvm, &filter);
 		break;
 	}
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	case KVM_DSM_IPI: {
+		struct kvm_dipi_params params;
+		struct kvm_vcpu *vcpu = NULL;
+		u32 reg;
+		u32 val;
+
+		r = 0;
+		if (copy_from_user(&params, argp, sizeof(params)))
+			goto out;
+		if (params.val != APIC_ICR) {
+			r = -EINVAL;
+			break;
+		}
+
+		reg = params.val;
+		val = params.val2;
+
+		vcpu = kvm_get_vcpu_by_id(kvm, params.vcpu_id);
+		if (!vcpu || !lapic_in_kernel(vcpu)) {
+			r = -EINVAL;
+			break;
+		}
+
+		mutex_lock(&vcpu->mutex);
+		vcpu_load(vcpu);
+		kvm_lapic_reg_write_remote(vcpu->arch.apic, reg, val, params.dest_id);
+		vcpu_put(vcpu);
+		mutex_unlock(&vcpu->mutex);
+		break;
+	}
+	case KVM_DSM_X2APIC: {
+		struct kvm_x2apic_params params;
+		struct kvm_vcpu *vcpu = NULL;
+
+		r = 0;
+		if (copy_from_user(&params, argp, sizeof(params)))
+			goto out;
+		if (params.pad) {
+			r = -EINVAL;
+			break;
+		}
+
+		vcpu = kvm_get_vcpu_by_id(kvm, params.vcpu_id);
+		if (!vcpu || !lapic_in_kernel(vcpu)) {
+			r = -EINVAL;
+			break;
+		}
+
+		mutex_lock(&vcpu->mutex);
+		vcpu_load(vcpu);
+		kvm_x2apic_icr_write_fast(vcpu->arch.apic, params.data);
+		vcpu_put(vcpu);
+		mutex_unlock(&vcpu->mutex);
+		break;
+	}
+	case KVM_DSM_APIC_BASE: {
+		struct kvm_apic_base_params params;
+		struct kvm_vcpu *vcpu = NULL;
+
+		r = 0;
+		if (copy_from_user(&params, argp, sizeof(params)))
+			goto out;
+		if (params.pad0[0] || params.pad0[1] || params.pad0[2] ||
+		    params.pad1 || params.host > 1) {
+			r = -EINVAL;
+			break;
+		}
+
+		vcpu = kvm_get_vcpu_by_id(kvm, params.vcpu_id);
+		if (!vcpu || !lapic_in_kernel(vcpu)) {
+			r = -EINVAL;
+			break;
+		}
+
+		mutex_lock(&vcpu->mutex);
+		vcpu_load(vcpu);
+		kvm_apic_set_base(vcpu, params.data, params.host);
+		vcpu_put(vcpu);
+		mutex_unlock(&vcpu->mutex);
+		break;
+	}
+#endif
 	default:
 		r = -ENOTTY;
 	}
