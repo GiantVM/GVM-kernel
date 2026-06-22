@@ -4967,6 +4967,11 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_X86_NOTIFY_VMEXIT:
 		r = kvm_caps.has_notify_vmexit;
 		break;
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	case KVM_CAP_X86_DSM_IRQ_FORWARD:
+		r = 1;
+		break;
+#endif
 	case KVM_CAP_VM_TYPES:
 		r = kvm_caps.supported_vm_types;
 		break;
@@ -6784,6 +6789,17 @@ split_irqchip_unlock:
 
 		r = 0;
 		break;
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	case KVM_CAP_X86_DSM_IRQ_FORWARD:
+		r = -EINVAL;
+		if (cap->args[0] || cap->args[1] || cap->args[2] || cap->args[3])
+			break;
+
+		kvm->arch.dsm_irq_forward_enabled = true;
+		kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_DSM_IRQ_FORWARD);
+		r = 0;
+		break;
+#endif
 	case KVM_CAP_X86_DISABLE_EXITS:
 		r = -EINVAL;
 		if (cap->args[0] & ~kvm_get_allowed_disable_exits())

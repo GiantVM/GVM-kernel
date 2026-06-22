@@ -131,6 +131,11 @@
 #define KVM_REQ_UPDATE_PROTECTED_GUEST_STATE \
 	KVM_ARCH_REQ_FLAGS(34, KVM_REQUEST_WAIT)
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+#define KVM_REQ_DSM_IRQ_FORWARD	\
+	KVM_ARCH_REQ(33)
+#endif
+
 #define CR0_RESERVED_BITS                                               \
 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
 			  | X86_CR0_ET | X86_CR0_NE | X86_CR0_WP | X86_CR0_AM \
@@ -1095,6 +1100,15 @@ struct kvm_vcpu_arch {
 	/* AMD MSRC001_0015 Hardware Configuration */
 	u64 msr_hwcr;
 
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	/* DSM interrupt forwarding */
+	u32 dsm_irq_forward_type;
+	u32 dsm_irq_forward_val;
+	u32 dsm_irq_forward_val2;
+	u32 dsm_irq_forward_dest_id;
+	u64 dsm_irq_forward_data;
+#endif
+
 	/* pv related cpuid info */
 	struct {
 		/*
@@ -1344,6 +1358,7 @@ enum kvm_apicv_inhibit {
 	 */
 	APICV_INHIBIT_REASON_APIC_ID_MODIFIED,
 	APICV_INHIBIT_REASON_APIC_BASE_MODIFIED,
+	APICV_INHIBIT_REASON_DSM_IRQ_FORWARD,
 
 	/******************************************************/
 	/* INHIBITs that are relevant only to the AMD's AVIC. */
@@ -1402,6 +1417,7 @@ enum kvm_apicv_inhibit {
 	__APICV_INHIBIT_REASON(PHYSICAL_ID_ALIASED),	\
 	__APICV_INHIBIT_REASON(APIC_ID_MODIFIED),	\
 	__APICV_INHIBIT_REASON(APIC_BASE_MODIFIED),	\
+	__APICV_INHIBIT_REASON(DSM_IRQ_FORWARD),	\
 	__APICV_INHIBIT_REASON(NESTED),			\
 	__APICV_INHIBIT_REASON(IRQWIN),			\
 	__APICV_INHIBIT_REASON(PIT_REINJ),		\
@@ -1688,6 +1704,11 @@ struct kvm_arch {
 	 * current VM.
 	 */
 	int cpu_dirty_log_size;
+
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	int dsm_id;
+	bool dsm_irq_forward_enabled;
+#endif
 };
 
 struct kvm_vm_stat {
