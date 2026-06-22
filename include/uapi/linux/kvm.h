@@ -194,6 +194,13 @@ struct kvm_exit_snp_req_certs {
 #define KVM_EXIT_ARM_LDST64B      42
 #define KVM_EXIT_SNP_REQ_CERTS    43
 
+/* DSM exit reason: APIC interrupt forwarding to userspace */
+#define KVM_EXIT_DSM_IRQ_FORWARD  44
+#define KVM_EXIT_DSM_SEND_IRQ     KVM_EXIT_DSM_IRQ_FORWARD
+
+#define KVM_DSM_IRQ_FORWARD_XAPIC_ICR   1
+#define KVM_DSM_IRQ_FORWARD_X2APIC_ICR  2
+
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
 #define KVM_INTERNAL_ERROR_EMULATION	1
@@ -243,7 +250,16 @@ struct kvm_run {
 	__u64 psw_addr; /* psw lower half */
 #endif
 	union {
-		/* KVM_EXIT_UNKNOWN */
+		/* KVM_EXIT_DSM_IRQ_FORWARD */
+		struct {
+			__u32 vcpu_id;
+			__u32 type;
+			__u32 val;
+			__u32 val2;
+			__u32 dest_id;
+			__u32 pad;
+			__u64 data;
+		} dsm_irq_forward;
 		struct {
 			__u64 hardware_exit_reason;
 		} hw;
@@ -999,6 +1015,7 @@ struct kvm_enable_cap {
 #define KVM_CAP_S390_HPAGE_2G 249
 #define KVM_CAP_PPC_COMPAT_CAPS 250
 #define KVM_CAP_ARM_PMU_V3_STRICT 251
+#define KVM_CAP_X86_DSM_IRQ_FORWARD 253
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
