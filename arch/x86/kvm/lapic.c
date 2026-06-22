@@ -3687,6 +3687,14 @@ int kvm_apic_accept_events(struct kvm_vcpu *vcpu)
 			kvm_set_mp_state(vcpu, KVM_MP_STATE_INIT_RECEIVED);
 	}
 	if (test_and_clear_bit(KVM_APIC_SIPI, &apic->pending_events)) {
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+		if (vcpu->kvm->arch.dsm_irq_forward_enabled &&
+		    vcpu->arch.mp_state == KVM_MP_STATE_UNINITIALIZED) {
+			kvm_vcpu_reset(vcpu, true);
+			kvm_set_mp_state(vcpu, KVM_MP_STATE_INIT_RECEIVED);
+		}
+#endif
+
 		if (vcpu->arch.mp_state == KVM_MP_STATE_INIT_RECEIVED) {
 			/* evaluate pending_events before reading the vector */
 			smp_rmb();
