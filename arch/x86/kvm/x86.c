@@ -11294,6 +11294,26 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 				goto out;
 			}
 		}
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+		if (kvm_check_request(KVM_REQ_DSM_IRQ_FORWARD, vcpu)) {
+			vcpu->run->exit_reason = KVM_EXIT_DSM_IRQ_FORWARD;
+			vcpu->run->dsm_irq_forward.vcpu_id = vcpu->vcpu_id;
+			vcpu->run->dsm_irq_forward.type =
+				vcpu->arch.dsm_irq_forward_type;
+			vcpu->run->dsm_irq_forward.val =
+				vcpu->arch.dsm_irq_forward_val;
+			vcpu->run->dsm_irq_forward.val2 =
+				vcpu->arch.dsm_irq_forward_val2;
+			vcpu->run->dsm_irq_forward.dest_id =
+				vcpu->arch.dsm_irq_forward_dest_id;
+			vcpu->run->dsm_irq_forward.pad = 0;
+			vcpu->run->dsm_irq_forward.data =
+				vcpu->arch.dsm_irq_forward_data;
+
+			r = 0;
+			goto out;
+		}
+#endif
 	}
 
 	if (kvm_check_request(KVM_REQ_EVENT, vcpu) || req_int_win ||

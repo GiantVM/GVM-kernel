@@ -2580,6 +2580,10 @@ static int apic_mmio_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this,
 	struct kvm_lapic *apic = to_lapic(this);
 	unsigned int offset = address - apic->base_address;
 	u32 val;
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	u32 reg;
+	u32 icr2;
+#endif
 
 	if (!apic_mmio_in_range(apic, address))
 		return -EOPNOTSUPP;
@@ -2601,6 +2605,27 @@ static int apic_mmio_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this,
 		return 0;
 
 	val = *(u32*)data;
+
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+	reg = offset & 0xff0;
+	if (vcpu->kvm->arch.dsm_irq_forward_enabled && reg == APIC_ICR) {
+		val &= ~APIC_ICR_BUSY;
+		icr2 = kvm_lapic_get_reg(apic, APIC_ICR2);
+
+		kvm_lapic_set_reg(apic, APIC_ICR, val);
+
+		vcpu->arch.dsm_irq_forward_type = KVM_DSM_IRQ_FORWARD_XAPIC_ICR;
+		vcpu->arch.dsm_irq_forward_val = APIC_ICR;
+		vcpu->arch.dsm_irq_forward_val2 = val;
+		vcpu->arch.dsm_irq_forward_dest_id =
+			GET_XAPIC_DEST_FIELD(icr2);
+		vcpu->arch.dsm_irq_forward_data = (u64)icr2 << 32 | val;
+
+		kvm_make_request(KVM_REQ_DSM_IRQ_FORWARD, vcpu);
+
+		return 0;
+	}
+#endif
 
 	kvm_lapic_reg_write(apic, offset & 0xff0, val);
 
@@ -3497,8 +3522,37 @@ static int kvm_lapic_msr_write(struct kvm_lapic *apic, u32 reg, u64 data)
 	 * can be written as such, all other registers remain accessible only
 	 * through 32-bit reads/writes.
 	 */
-	if (reg == APIC_ICR)
+	if (reg == APIC_ICR) {
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+		struct kvm_vcpu *vcpu = apic->vcpu;
+
+		if (vcpu->kvm->arch.dsm_irq_forward_enabled) {
+			if (data & X2APIC_ICR_RESERVED_BITS)
+				return 1;
+
+			data &= ~APIC_ICR_BUSY;
+
+			if (kvm_x86_ops.x2apic_icr_is_split) {
+				kvm_lapic_set_reg(apic, APIC_ICR, data);
+				kvm_lapic_set_reg(apic, APIC_ICR2, data >> 32);
+			} else {
+				kvm_lapic_set_reg64(apic, APIC_ICR, data);
+			}
+			trace_kvm_apic_write(APIC_ICR, data);
+
+			vcpu->arch.dsm_irq_forward_type =
+				KVM_DSM_IRQ_FORWARD_X2APIC_ICR;
+			vcpu->arch.dsm_irq_forward_val = APIC_ICR;
+			vcpu->arch.dsm_irq_forward_val2 = (u32)data;
+			vcpu->arch.dsm_irq_forward_dest_id = data >> 32;
+			vcpu->arch.dsm_irq_forward_data = data;
+
+			kvm_make_request(KVM_REQ_DSM_IRQ_FORWARD, vcpu);
+			return 0;
+		}
+#endif
 		return kvm_x2apic_icr_write(apic, data);
+	}
 
 	/* Bits 63:32 are reserved in all other registers. */
 	if (data >> 32)
