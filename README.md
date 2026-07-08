@@ -8,17 +8,17 @@ This installation guide describes how to download the required Linux kernel sour
 
 ### Step 1. Obtain the Kernel Source
 
-#### Option 1.Download Linux 7.1.0-rc6 and Apply GiantVM Patches
+#### Option 1.Download Linux 7.2-rc2 and Apply GiantVM Patches
 
-The required kernel version is `7.1.0-rc6`.
+The required kernel version is `7.2-rc2`.
 
 Download and extract the official Linux kernel source:
 
 ```bash
-tag=v7.1-rc6
+tag=v7.2-rc2
 wget https://github.com/torvalds/linux/archive/refs/tags/$tag.tar.gz
 tar -xf $tag.tar.gz
-cd linux-7.1-rc6
+cd linux-7.2-rc2
 ```
 
 Download address for the patch package:
@@ -50,7 +50,7 @@ done
 #### Option 2.Clone the GiantVM Kernel Repository
 
 ```bash
-git clone -b shared-memory https://github.com/GiantVM/GVM-kernel.git
+git clone -b shared-memory/v7.2-rc2 https://github.com/GiantVM/GVM-kernel.git
 ```
 
 ### Step 2. Prepare the Provided Static QEMU Package
@@ -83,7 +83,7 @@ The GVM-qemu source code is available at https://github.com/GiantVM/GVM-qemu/tre
 
 ### Step 3. Build the Kernel and Replace the System Kernel
 
-Enter the GiantVM kernel source directory — this should be either the patched `linux-7.1-rc5` source tree from Option 1 or the cloned `GVM-kernel` repository from Option 2. GVM-kernel is used uniformly in the following steps.
+Enter the GiantVM kernel source directory — this should be either the patched `linux-7.2-rc2` source tree from Option 1 or the cloned `GVM-kernel` repository from Option 2. GVM-kernel is used uniformly in the following steps.
 
 The following packages are required for compilation. Install them as needed:
 
@@ -153,7 +153,7 @@ After the system comes back up, verify that the active kernel is available:
 uname -r
 ```
 
-The expected kernel version is: `7.1.0-rc6`
+The expected kernel version is: `7.2.0-rc2`
 
 ### Step 4. Start GiantVM Nodes
 
