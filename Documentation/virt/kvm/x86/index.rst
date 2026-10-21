@@ -17,3 +17,4 @@ KVM for x86 systems
    nested-vmx
    running-nested-guests
    timekeeping
+   dsm-shared-memory
