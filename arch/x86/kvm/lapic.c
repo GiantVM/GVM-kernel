@@ -3535,8 +3535,37 @@ static int kvm_lapic_msr_write(struct kvm_lapic *apic, u32 reg, u64 data)
 	 * can be written as such, all other registers remain accessible only
 	 * through 32-bit reads/writes.
 	 */
-	if (reg == APIC_ICR)
+	if (reg == APIC_ICR) {
+#ifdef CONFIG_KVM_DSM_IRQ_FORWARD
+		struct kvm_vcpu *vcpu = apic->vcpu;
+
+		if (vcpu->kvm->arch.dsm_irq_forward_enabled) {
+			if (data & X2APIC_ICR_RESERVED_BITS)
+				return 1;
+
+			data &= ~APIC_ICR_BUSY;
+
+			if (kvm_x86_ops.x2apic_icr_is_split) {
+				kvm_lapic_set_reg(apic, APIC_ICR, data);
+				kvm_lapic_set_reg(apic, APIC_ICR2, data >> 32);
+			} else {
+				kvm_lapic_set_reg64(apic, APIC_ICR, data);
+			}
+			trace_kvm_apic_write(APIC_ICR, data);
+
+			vcpu->arch.dsm_irq_forward_type =
+				KVM_DSM_IRQ_FORWARD_X2APIC_ICR;
+			vcpu->arch.dsm_irq_forward_val = APIC_ICR;
+			vcpu->arch.dsm_irq_forward_val2 = (u32)data;
+			vcpu->arch.dsm_irq_forward_dest_id = data >> 32;
+			vcpu->arch.dsm_irq_forward_data = data;
+
+			kvm_make_request(KVM_REQ_DSM_IRQ_FORWARD, vcpu);
+			return 0;
+		}
+#endif
 		return kvm_x2apic_icr_write(apic, data);
+	}
 
 	/* Bits 63:32 are reserved in all other registers. */
 	if (data >> 32)
